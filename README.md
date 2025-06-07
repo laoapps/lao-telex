@@ -1,185 +1,98 @@
-```
-// LaoTelexDLL.h
-#pragma once
-#include <windows.h>
+Summary of LaoKa Rules
+The LaoKa standard is a phonetic input method that uses Latin letters to represent Lao characters, designed to simplify typing Lao on standard QWERTY keyboards. It’s inspired by the need for a faster, more intuitive alternative to existing Lao input methods (e.g., LaosScript, LaosUnikey), which require complex key combinations due to Lao’s 56+ characters. LaoKa leverages Latin-based phonetic symbols, aligning closely with Lao pronunciation, and includes rules to handle consonants, vowels, tones, and special signs. Below is a summarized version of the rules extracted from your documentation, structured for implementation across platforms.
 
-#ifdef LAOTEXDLL_EXPORTS
-#define LAOTEXDLL_API __declspec(dllexport)
-#else
-#define LAOTEXDLL_API __declspec(dllimport)
-#endif
+1. Word Structure
+A Lao word in LaoKa follows the structure:
 
-extern "C" LAOTEXDLL_API void InstallHook(HWND hwnd);
-extern "C" LAOTEXDLL_API void RemoveHook();
+Consonant + Vowel + Sound Element + Voiced Sign + Special Sign
 
-// LaoTelexDLL.cpp
-#include "LaoTelexDLL.h"
-#include <string>
-#include <map>
-
-HHOOK hKeyboardHook = NULL;
-HWND hMainWnd = NULL;
-std::wstring buffer;
-std::map<std::wstring, std::wstring> keyMap = {
-    {L"k", L"\u0E81"}, // ກ
-    {L"a", L"\u0EB2"}, // າ
-    {L"s", L"\u0ECB"}, // ໋ (high tone)
-    {L"kas", L"\u0E81\u0EB2\u0ECB"}, // ກ້າ
-    {L"kaf", L"\u0E81\u0EB2\u0EC8"}  // ກ່າ
-};
-
-void SendUnicodeString(const std::wstring& str) {
-    std::vector<INPUT> inputs;
-    for (wchar_t c : str) {
-        INPUT input = {0};
-        input.type = INPUT_KEYBOARD;
-        input.ki.wVk = 0;
-        input.ki.wScan = c;
-        input.ki.dwFlags = KEYEVENTF_UNICODE;
-        inputs.push_back(input);
-        input.ki.dwFlags |= KEYEVENTF_KEYUP;
-        inputs.push_back(input);
-    }
-    SendInput((UINT)inputs.size(), inputs.data(), sizeof(INPUT));
-}
-
-LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-    if (nCode >= 0 && wParam == WM_KEYDOWN) {
-        KBDLLHOOKSTRUCT* kbStruct = (KBDLLHOOKSTRUCT*)lParam;
-        if (kbStruct->vkCode == VK_BACK) {
-            if (!buffer.empty()) buffer.pop_back();
-            return 1;
-        }
-        if (kbStruct->vkCode >= 'A' && kbStruct->vkCode <= 'Z') {
-            wchar_t c = tolower(kbStruct->vkCode);
-            buffer += c;
-            auto it = keyMap.find(buffer);
-            if (it != keyMap.end()) {
-                SendUnicodeString(it->second);
-                buffer.clear();
-                return 1;
-            }
-            for (const auto& pair : keyMap) {
-                if (pair.first.find(buffer) == 0) return 1; // Partial match, wait for more keys
-            }
-            buffer.clear();
-        }
-    }
-    return CallNextHookEx(hKeyboardHook, nCode, wParam, lParam);
-}
-
-LAOTEXDLL_API void InstallHook(HWND hwnd) {
-    hMainWnd = hwnd;
-    hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, GetModuleHandle(NULL), 0);
-}
-
-LAOTEXDLL_API void RemoveHook() {
-    if (hKeyboardHook) UnhookWindowsHookEx(hKeyboardHook);
-    hKeyboardHook = NULL;
-}
-
-// LaoTelexApp.cpp (System Tray App)
-#include <windows.h>
-#include "LaoTelexDLL.h"
-
-#define ID_TRAY_APP_ICON 1001
-#define ID_TRAY_EXIT 1002
-#define WM_TRAYICON (WM_USER + 1)
-
-NOTIFYICONDATA nid = {0};
-HMENU hMenu;
-bool isHookActive = false;
-
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_CREATE:
-        nid.cbSize = sizeof(NOTIFYICONDATA);
-        nid.hWnd = hwnd;
-        nid.uID = ID_TRAY_APP_ICON;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nid.uCallbackMessage = WM_TRAYICON;
-        nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-        lstrcpy(nid.szTip, L"Lao Telex Keyboard");
-        Shell_NotifyIcon(NIM_ADD, &nid);
-        hMenu = CreatePopupMenu();
-        AppendMenu(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
-        break;
-    case WM_TRAYICON:
-        if (LOWORD(lParam) == WM_RBUTTONDOWN) {
-            POINT pt;
-            GetCursorPos(&pt);
-            SetForegroundWindow(hwnd);
-            TrackPopupMenu(hMenu, TPM_RIGHTALIGN, pt.x, pt.y, 0, hwnd, NULL);
-        } else if (LOWORD(lParam) == WM_LBUTTONDOWN) {
-            isHookActive = !isHookActive;
-            if (isHookActive) InstallHook(hwnd);
-            else RemoveHook();
-            Shell_NotifyIcon(NIM_MODIFY, &nid);
-        }
-        break;
-    case WM_COMMAND:
-        if (LOWORD(wParam) == ID_TRAY_EXIT) DestroyWindow(hwnd);
-        break;
-    case WM_DESTROY:
-        Shell_NotifyIcon(NIM_DELETE, &nid);
-        RemoveHook();
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProc(hwnd, msg, wParam, lParam);
-    }
-    return 0;
-}
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
-    WNDCLASSEX wc = {0};
-    wc.cbSize = sizeof(WNDCLASSEX);
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = L"LaoTelexClass";
-    RegisterClassEx(&wc);
-
-    HWND hwnd = CreateWindow(L"LaoTelexClass", L"Lao Telex", WS_OVERLAPPEDWINDOW,
-                            CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, NULL, NULL, hInstance, NULL);
-
-    MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    return (int)msg.wParam;
-}
-
-// README.md
-# Lao Telex Keyboard for Windows
-A custom keyboard input method for typing Lao with a Telex-like style.
-
-## Features
-- Type Lao Unicode characters using key sequences (e.g., `kas` → `ກ້າ`).
-- System tray app to toggle the keyboard.
-- Open-source under MIT License.
-
-## Installation
-1. Build the solution in Visual Studio (requires VC++).
-2. Copy `LaoTelexDLL.dll` and `LaoTelexApp.exe` to a directory.
-3. Run `LaoTelexApp.exe`.
-4. Click the tray icon to enable/disable the keyboard.
-
-## Typing Rule
-- `k` → `ກ` (consonant)
-- `a` → `າ` (vowel)
-- `s` → `໋` (high tone)
-- `kas` → `ກ້າ` (syllable with high tone)
-- Backspace to undo.
-
-## Building
-- Open `LaoTelex.sln` in Visual Studio.
-- Build for x64 or x86.
-- Ensure `LaoTelexDLL.lib` is linked.
-
-## License
-MIT License. See `LICENSE` file.
-
-## Contributing
-Fork the repository, make changes, and submit a pull request.
-```
+Consonant (A): Obligatory first character (single or double consonant).
+Vowel (B): Combines with the consonant, may stand before/after it.
+Sound Element (C): Optional consonant/vowel to complete the syllable.
+Voiced Sign (D): Tone mark (e.g., ່, ້, ໊, ໋).
+Special Sign (E): Karan (໌) or repeating (ໆ) sign.
+2. Consonant Mappings
+Single Consonants: 27 consonants mapped to Latin letters or digraphs.
+Examples:
+G → ກ (U+0E81)
+KH → ຂ (U+0E82)
+K → ຄ (U+0E84)
+NG → ງ (U+0E87)
+Full table in the document (section 24).
+Notes:
+Uncombinable: G, D, B cannot take tone marks at word’s end.
+Combinable: NG, NH, N, M, V can take tone marks.
+Double Consonants: 6 combinations starting with HH (or H in Rule II).
+Examples:
+HHN → ໜ (U+0EDC)
+HHM → ໝ (U+0EDD)
+HHL → ຫຼ (U+0EAB U+0EBC)
+Full table in section 24.
+3. Vowel Mappings
+31 vowels, categorized by their ability to combine with consonants:
+Non-combinable: Cannot form syllables alone (e.g., A → xະ).
+Compulsory: Must combine with a consonant (e.g., AE → xັ).
+Combinable: Can form syllables with/without consonants (e.g., AA → xາ).
+Double Vowels: Complex vowels (e.g., IA → ເxຽ).
+Examples:
+A → xະ (U+0EB0)
+AA → xາ (U+0EB2)
+I → xິ (U+0EB4)
+IA → ເxຽ (U+0EC0 U+0EBD)
+Full table in section 25.
+Positioning:
+Some vowels (e.g., AY, AAY) precede the consonant in output (e.g., AY → ໄx).
+Others follow or surround the consonant.
+4. Sign Mappings
+Voiced Signs (Tone Marks): 4 tone marks.
+F → x່ (U+0EC8, low tone, ‘Ech’)
+J → x້ (U+0EC9, high falling, ‘Tho’)
+Z → x໊ (U+0ECA, rising, ‘Ti’)
+X → x໋ (U+0ECB, high, ‘Chattava’)
+Special Signs:
+L → x໌ (U+0ECC, Karan, for foreign words)
+P → xໆ (U+0ED6, repeating sign)
+Table in section 26.
+5. Typing Rules
+Rule I: Direct mapping using the standard structure.
+Example: P+AA → ປາ (U+0E9B U+0EB2)
+S+AE+N+J → ນັ້ນ (U+0EAA U+0EB1 U+0E99 U+0EC9)
+Rule II: Simplifies typing for vowels and HH consonants.
+Vowel at Start: Words starting with a vowel implicitly prepend ອ (OH, U+0E9D).
+Example: WWNFP → ອື່ນໆ (U+0E9D U+0EB7 U+0E99 U+0EC8 U+0ED6)
+Short Vowels: A (xະ) and O (xໍ) replace AA (xາ) or OH (ອ) in certain contexts.
+Example: OHANF → ອ່ານ (U+0E9D U+0EB2 U+0E99 U+0EC8)
+H for HH: H replaces HH for double consonants (except with V).
+Example: HMAYJ → ໄໝ້ (U+0EC4 U+0E9E U+0EC9)
+Rule II+: Shortcuts for common syllables.
+Examples:
+AI → xາຍ (U+0EB2 U+0E8D, equivalent to AANH)
+OI → xອຍ (U+0E9D U+0E8D, equivalent to OHNH)
+AO → xາວ (U+0EB2 U+0EA7, equivalent to AAV)
+Full list in section 28.
+6. Input Mechanism
+Input Buffer: Characters are stored in a buffer until a space or enter key is pressed.
+Backspace: Removes the last character from the buffer and editor.
+Conversion Trigger: Space or enter triggers conversion from Latin to Lao Unicode.
+Tone/Special Signs: Processed last, placed in a separate array if at the end or near-end of a word.
+Vowel Positioning: Vowels like AY, AAY are moved before the consonant in the output.
+Caps Lock: Toggles LaoKa mode (on for Lao, off for English).
+Control Key: Double-tap Control within 2 seconds toggles LaoKa mode.
+7. Algorithm Summary
+Input Capture: Store Latin characters (A-Z) in an array, ignoring Shift/Control.
+Mark Sign Handling: Identify and extract tone/special signs (F, J, Z, X, L, P) to a separate array.
+Vowel Reordering: Move specific vowels (e.g., AY, EE) before the consonant.
+Conversion:
+Apply Rule I, II, or II+ based on context (e.g., vowel at start, H vs. HH).
+Map Latin sequences to Lao Unicode using predefined tables.
+Output:
+Delete Latin characters from the editor (backspace).
+Insert Lao Unicode characters via WM_CHAR or equivalent.
+Handle cursor positioning and enter key.
+8. Key Features for Implementation
+Dynamic Input: Supports multi-key sequences (e.g., HHNG → ຫງ).
+Context Awareness: Adjusts mappings based on position (e.g., L as consonant or Karan sign).
+Unicode Output: Uses Lao Unicode range (U+0E80–U+0EFF).
+Font Support: Supports Unicode fonts (e.g., Saysettha Unicode) and legacy 2000-standard fonts.
+Error Handling: Resets buffers on non-alphabetic input or thread change.
+This summary provides a clear, platform-agnostic foundation for implementing LaoKa. The full tables (consonants, vowels, signs) and examples from the document should be included in each project’s documentation.
