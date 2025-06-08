@@ -1,0 +1,492 @@
+#!/bin/bash
+
+# Create project directory structure
+mkdir -p LaoKaKeyboard/app/src/main/java/com/example/laokakeyboard
+mkdir -p LaoKaKeyboard/app/src/main/res/layout
+mkdir -p LaoKaKeyboard/app/src/main/res/xml
+mkdir -p LaoKaKeyboard/app/src/main/res/values
+mkdir -p LaoKaKeyboard/app
+
+# Create Kotlin files
+cat > LaoKaKeyboard/app/src/main/java/com/example/laokakeyboard/LaoKaConverter.kt << 'EOL'
+package com.example.laokakeyboard
+
+class LaoKaConverter {
+    // Consonant mappings (single and double)
+    private val consonants = mapOf(
+        'G' to "ກ", "KH" to "ຂ", 'K' to "ຄ", "NG" to "ງ", 'J' to "ຈ", 'S' to "ສ", 'X' to "ຊ",
+        "NY" to "ຍ", 'D' to "ດ", 'T' to "ຕ", "TH" to "ທ", 'N' to "ນ", 'B' to "ບ", 'P' to "ປ",
+        "PH" to "ຜ", 'F' to "ຝ", 'M' to "ມ", 'Y' to "ຢ", 'R' to "ຣ", 'L' to "ລ", 'V' to "ວ",
+        'H' to "ຫ", "OH" to "ອ", "HHN" to "ໜ", "HHM" to "ໝ", "HHL" to "ຫຼ", "HHNG" to "ຫງ",
+        "HHNH" to "ຫຍ", "HHV" to "ຫວ"
+    )
+    
+    // Vowel mappings
+    private val vowels = mapOf(
+        'A' to "ະ", "AA" to "າ", 'I' to "ິ", "II" to "ີ", 'U' to "ຸ", "UU" to "ູ", 'E' to "ເ",
+        "EE" to "ແ", 'O' to "ໍ", "OO" to "ໂ", "AE" to "ັ", "IA" to "ເຽ", "UA" to "ົວ", "UUA" to "ົວ",
+        "AY" to "ໄ", "AAY" to "ໃ", "AW" to "ເົາ", "AM" to "ຳ", "AN" to "ັນ", "EM" to "ແມ", "OM" to "ໂມ",
+        "IM" to "ເມ", "UM" to "ຸມ", "EEM" to "ແມ", "OOM" to "ໂມ", "IIM" to "ເມ", "UUM" to "ຸມ",
+        "EW" to "ເຶອ", "OEW" to "ເືອ"
+    )
+    
+    // Rule II+ shortcuts
+    private val ruleIiPlus = mapOf(
+        "AI" to "າຍ", "OI" to "ອຍ", "OY" to "ໂຍ", "AO" to "າວ", "UI" to "ຸຍ", "UY" to "ູຍ", "EO" to "ແວ"
+    )
+    
+    // Tone marks
+    private val toneMarks = mapOf('F' to "່", 'J' to "້", 'Z' to "໊", 'X' to "໋")
+    
+    // Special signs
+    private val specialSigns = mapOf('L' to "໌", 'P' to "ໆ")
+    
+    // Buffer and state
+    private var buffer = mutableListOf<Char>()
+    private var markSign: Char? = null
+    private var isLaokaMode = true
+
+    fun addChar(char: Char): List<Char> {
+        if (char.isLetter()) {
+            buffer.add(char.uppercaseChar())
+        }
+        return buffer
+    }
+
+    fun clearBuffer() {
+        buffer.clear()
+        markSign = null
+    }
+
+    fun toggleMode(): Boolean {
+        isLaokaMode = !isLaokaMode
+        clearBuffer()
+        return isLaokaMode
+    }
+
+    fun backspace(): List<Char> {
+        if (buffer.isNotEmpty()) {
+            buffer.removeAt(buffer.size - 1)
+        }
+        return buffer
+    }
+
+    fun convert(): String {
+        if (!isLaokaMode || buffer.isEmpty()) {
+            return if (buffer.isNotEmpty()) buffer.joinToString("").lowercase() else ""
+        }
+
+        // Extract mark sign (tone or special sign)
+        markSign = null
+        if (buffer.last() in toneMarks.keys || buffer.last() in specialSigns.keys) {
+            markSign = buffer.removeAt(buffer.size - 1)
+        }
+
+        val inputStr = buffer.joinToString("")
+
+        // Rule II+: Check shortcuts
+        if (inputStr in ruleIiPlus) {
+            var result = ruleIiPlus[inputStr] ?: ""
+            if (markSign in toneMarks.keys) {
+                result += toneMarks[markSign]
+            } else if (markSign in specialSigns.keys) {
+                result += specialSigns[markSign]
+            }
+            clearBuffer()
+            return result
+        }
+
+        // Rule II: Handle vowel at start, short vowels, H for HH
+        var processedStr = inputStr
+        if (processedStr[0].toString() in vowels.keys || processedStr in listOf("A", "O")) {
+            processedStr = "OH" + processedStr
+        }
+        if ("A" in processedStr && processedStr != "A") {
+            processedStr = processedStr.replace("A", "AA")
+        }
+        if (processedStr.startsWith("O") && processedStr != "O") {
+            processedStr = processedStr.replaceFirst("O", "OH")
+        }
+        if (processedStr.startsWith("H") && !processedStr.startsWith("HH")) {
+            for (dc in listOf("HMAY", "HNA", "HMA", "HLA")) {
+                if (processedStr.startsWith(dc)) {
+                    processedStr = "HH" + processedStr.substring(1)
+                }
+            }
+        }
+
+        // Rule I: Parse consonant + vowel + sound element + mark sign
+        val result = mutableListOf<String>()
+        var i = 0
+        while (i < processedStr.length) {
+            // Check triple consonants
+            if (i + 3 <= processedStr.length && processedStr.substring(i, i + 3) in consonants) {
+                result.add(consonants[processedStr.substring(i, i + 3)] ?: "")
+                i += 3
+            }
+            // Check double consonants or vowels
+            else if (i + 2 <= processedStr.length) {
+                val substr = processedStr.substring(i, i + 2)
+                when {
+                    substr in consonants -> {
+                        result.add(consonants[substr] ?: "")
+                        i += 2
+                    }
+                    substr in vowels -> {
+                        result.add(vowels[substr] ?: "")
+                        i += 2
+                    }
+                    else -> i += 1
+                }
+            }
+            // Check single chars
+            else {
+                val char = processedStr[i]
+                when {
+                    char.toString() in consonants -> result.add(consonants[char.toString()] ?: "")
+                    char.toString() in vowels -> result.add(vowels[char.toString()] ?: "")
+                }
+                i += 1
+            }
+        }
+
+        // Reorder vowels (e.g., AY, EE, OW before consonant)
+        val reordered = mutableListOf<String>()
+        if (result.isNotEmpty() && result[0] in vowels.values) {
+            reordered.add(result[0])
+            reordered.addAll(result.subList(1, result.size))
+        } else {
+            reordered.addAll(result)
+        }
+
+        // Apply mark sign
+        var output = reordered.joinToString("")
+        when (markSign) {
+            in toneMarks.keys -> output += toneMarks[markSign]
+            in specialSigns.keys -> output += specialSigns[markSign]
+        }
+
+        clearBuffer()
+        return output
+    }
+}
+EOL
+
+cat > LaoKaKeyboard/app/src/main/java/com/example/laokakeyboard/LaoKaIME.kt << 'EOL'
+package com.example.laokakeyboard
+
+import android.inputmethodservice.InputMethodService
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+
+class LaoKaIME : InputMethodService() {
+    private lateinit var converter: LaoKaConverter
+    private lateinit var keyboardView: View
+
+    override fun onCreate() {
+        super.onCreate()
+        converter = LaoKaConverter()
+    }
+
+    override fun onCreateInputView(): View {
+        keyboardView = layoutInflater.inflate(R.layout.input, null)
+        // Initialize keyboard buttons and set click listeners
+        return keyboardView
+    }
+
+    override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        // Handle input start
+    }
+
+    private fun handleKeyPress(key: Char) {
+        val ic: InputConnection? = currentInputConnection
+        if (ic != null) {
+            converter.addChar(key)
+            val output = converter.convert()
+            ic.commitText(output, 1)
+        }
+    }
+
+    fun onKeyPress(key: Char) {
+        handleKeyPress(key)
+    }
+
+    fun onBackspace() {
+        converter.backspace()
+        val ic: InputConnection? = currentInputConnection
+        ic?.deleteSurroundingText(1, 0)
+    }
+
+    fun toggleMode() {
+        converter.toggleMode()
+        // Update keyboard UI based on mode
+    }
+}
+EOL
+
+cat > LaoKaKeyboard/app/src/main/java/com/example/laokakeyboard/SettingsActivity.kt << 'EOL'
+package com.example.laokakeyboard
+
+import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
+
+class SettingsActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_settings)
+        
+        // Setup preferences and UI elements
+    }
+}
+EOL
+
+# Create layout files
+cat > LaoKaKeyboard/app/src/main/res/layout/input.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<KeyboardView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/keyboard"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:keyBackground="@drawable/key_background"
+    android:keyTextColor="#000000"
+    android:keyTextSize="22sp" />
+EOL
+
+cat > LaoKaKeyboard/app/src/main/res/layout/activity_settings.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <Switch
+        android:id="@+id/laoka_mode_switch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="LaoKa Mode" />
+
+    <!-- Add more settings options as needed -->
+
+</LinearLayout>
+EOL
+
+# Create XML resource files
+cat > LaoKaKeyboard/app/src/main/res/xml/method.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<input-method xmlns:android="http://schemas.android.com/apk/res/android">
+    <subtype
+        android:imeSubtypeMode="keyboard"
+        android:imeSubtypeLocale="lo_LA"
+        android:label="LaoKa Keyboard" />
+</input-method>
+EOL
+
+cat > LaoKaKeyboard/app/src/main/res/xml/qwerty.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
+    android:keyWidth="10%p"
+    android:horizontalGap="0px"
+    android:verticalGap="0px"
+    android:keyHeight="60dp">
+
+    <Row>
+        <Key android:codes="81" android:keyLabel="Q" android:keyEdgeFlags="left"/>
+        <Key android:codes="87" android:keyLabel="W"/>
+        <Key android:codes="69" android:keyLabel="E"/>
+        <Key android:codes="82" android:keyLabel="R"/>
+        <Key android:codes="84" android:keyLabel="T"/>
+        <Key android:codes="89" android:keyLabel="Y"/>
+        <Key android:codes="85" android:keyLabel="U"/>
+        <Key android:codes="73" android:keyLabel="I"/>
+        <Key android:codes="79" android:keyLabel="O"/>
+        <Key android:codes="80" android:keyLabel="P" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <!-- Add more rows for the full keyboard -->
+    
+</Keyboard>
+EOL
+
+# Create values files
+cat > LaoKaKeyboard/app/src/main/res/values/strings.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LaoKa Keyboard</string>
+    <string name="keyboard_name">LaoKa Keyboard</string>
+    <string name="settings_title">Keyboard Settings</string>
+    <string name="laoka_mode">LaoKa Input Mode</string>
+</resources>
+EOL
+
+# Create manifest file
+cat > LaoKaKeyboard/app/src/main/AndroidManifest.xml << 'EOL'
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.laokakeyboard">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <service
+            android:name=".LaoKaIME"
+            android:label="@string/keyboard_name"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:label="@string/settings_title">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOL
+
+# Create build.gradle files
+cat > LaoKaKeyboard/app/build.gradle << 'EOL'
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+}
+
+android {
+    compileSdkVersion 33
+    buildToolsVersion "30.0.3"
+
+    defaultConfig {
+        applicationId "com.example.laokakeyboard"
+        minSdkVersion 21
+        targetSdkVersion 33
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.8.0'
+}
+EOL
+
+cat > LaoKaKeyboard/build.gradle << 'EOL'
+buildscript {
+    ext.kotlin_version = '1.8.22'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.0.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+EOL
+
+# Create settings.gradle
+cat > LaoKaKeyboard/settings.gradle << 'EOL'
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "LaoKaKeyboard"
+include ':app'
+EOL
+
+# Create README.md and LICENSE
+cat > LaoKaKeyboard/README.md << 'EOL'
+# LaoKa Keyboard
+
+A phonetic input method for Lao language based on LaoKa rules.
+
+## Features
+- Converts phonetic input to Lao Unicode
+- Supports all Lao consonants, vowels, and tone marks
+- Toggle between LaoKa and English modes
+
+## Installation
+1. Build the APK using Android Studio
+2. Install on your Android device
+3. Enable the keyboard in Settings > System > Languages & input > Virtual keyboard
+EOL
+
+cat > LaoKaKeyboard/LICENSE << 'EOL'
+MIT License
+
+Copyright (c) 2023 LaoKa Keyboard Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+EOL
+
+echo "LaoKaKeyboard project structure created successfully!"
